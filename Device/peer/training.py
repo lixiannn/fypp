@@ -80,7 +80,11 @@ def load_client_dataset():
     # client_path = os.path.join(basepath, "saved_data_client_"+str(client_num))
     client_path = "/usr/thisdocker/dataset"
     print("[INFO] Loading from {} ".format(client_path))
-    new_dataset = tf.data.experimental.load(client_path)
+    try:
+      new_dataset = tf.data.experimental.load(client_path)
+    except:
+      print("no data found")
+      return None
     return new_dataset
 
 
@@ -90,6 +94,9 @@ def local_training(client_num, local_model, build_flag):
     # client_num = 1
     log_prefix = "[" + str(client_num).upper() + "] "
     local_dataset = load_client_dataset()
+    if local_dataset == None:
+        print("no data so skip training")
+        return local_model
     x = local_dataset.element_spec[0].shape[1]
     y = local_dataset.element_spec[0].shape[2]
     z = local_dataset.element_spec[0].shape[3]
