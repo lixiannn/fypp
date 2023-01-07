@@ -40,19 +40,21 @@ def send_updated_model(socket, obj, identity, protocol=pickle.HIGHEST_PROTOCOL):
     z = zlib.compress(p)
     return socket.send_multipart([identity, z])
 
-def send_zipped_pickle_mulipart(socket, obj, weights, flags=0, protocol=pickle.HIGHEST_PROTOCOL):
+def send_zipped_pickle_mulipart(socket, obj, weights, travel_cost, flags=0, protocol=pickle.HIGHEST_PROTOCOL):
     """pickle the object, compress the pickle and send it"""
     p = pickle.dumps(obj, protocol)
     z = zlib.compress(p)
     w = pickle.dumps(weights, protocol)
-    return socket.send_multipart([z, w], flags=flags)
+    tc = pickle.dumps(travel_cost, protocol)
+    return socket.send_multipart([z, w, tc], flags=flags)
 
 
 def recv_zipped_pickle_multipart(socket, flags=0):
     """reverse compress and pickle operations to get object"""
     items_received = socket.recv_multipart(flags)
-    if len(items_received) == 2:
+    if len(items_received) == 3:
         p = zlib.decompress(items_received[0])
         weights = pickle.loads(items_received[1])
+        travel_cost = pickle.loads(items_received[2])
     model = pickle.loads(p)
-    return model, weights
+    return model, weights, travel_cost

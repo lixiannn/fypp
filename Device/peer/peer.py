@@ -5,11 +5,12 @@ import json, joblib
 import ast
 import training, inference
 import tensorflow as tf
+from random import randint
 
 class Node:
     """A peer-to-peer node that can act as client or server at each round"""
 
-    def __init__(self, context, node_id, peers, cluster_id, role_in_cluster):
+    def __init__(self, context, node_id, peers, cluster_id, role_in_cluster, travel_cost):
         self.context = context
         self.node_id = node_id
         self.peers = peers
@@ -22,6 +23,9 @@ class Node:
         self.local_history = None
         self.global_model = None
         self.aggregate_weights = []
+        self.computing_resources = 2 # simulate using time
+        self.travel_cost = travel_cost
+        self.total_travel_cost = 0
         self.initialize_node()
 
     def initialize_node(self):
@@ -43,6 +47,7 @@ class Node:
         print("%s Incoming Connection = %s" % (self.log_prefix, self.in_connection))
         print("%s Outgoing Connections = %s" % (self.log_prefix, self.out_connection))
         print("%s History = %s" % (self.log_prefix, self.local_history))
+        print("%s Computing Resources = %s" % (self.log_prefix, self.computing_power))
         print("*" * 60)
 
     def save_model(self):
@@ -65,11 +70,11 @@ class Node:
             zmq_helper.send_zipped_pickle(self.out_connection[to_node], self.aggregate_weights)
             # self.out_connection[to_node].send_string(self.local_model)
         except Exception as e:
-            print("%sERROR establishing socket for to-node" % self.log_prefix)
+            print("%s ERROR establishing socket for to-node" % self.log_prefix)
 
     def send_model_weights(self, to_node):
         try:
-            zmq_helper.send_zipped_pickle_mulipart(self.out_connection[to_node], self.global_model, self.aggregate_weights)
+            zmq_helper.send_zipped_pickle_mulipart(self.out_connection[to_node], self.global_model, self.aggregate_weights, self.total_travel_cost)
             # self.out_connection[to_node].send_string(self.local_model)
         except Exception as e:
             print("%sERROR establishing socket for to-node" % self.log_prefix)
@@ -90,8 +95,9 @@ class Node:
 
     def receive_model_weights(self):
         from_node = self.in_connection.recv(0)  # Reads identity
-        self.local_model, self.aggregate_weights = zmq_helper.recv_zipped_pickle_multipart(self.in_connection)  # Reads model object
+        self.local_model, self.aggregate_weights, self.total_travel_cost = zmq_helper.recv_zipped_pickle_multipart(self.in_connection)  # Reads model object
         self.global_model = self.local_model
+        self.total_travel_cost += self.travel_cost
         # self.local_model = self.in_connection.recv_string()
         return from_node
 
@@ -102,12 +108,16 @@ class Node:
         if build_flag:
             self.global_model = self.local_model
         self.aggregate_weights.append(self.local_model.get_weights())
+        print("sleeping to simulate computing resources - sleep longer suggests lower computing power/resources")
+        print(f"{self.node_id} sleeping for {self.computing_resources} seconds")
+        time.sleep(self.computing_resources)
         # self.local_model = {"from": self.node_id}  # for debugging
         # self.save_model()
 
     def inference_step(self):
         print("inferencing...")
         inference.eval_on_test_set(self.global_model)
+        print("total travel cost = ", self.total_travel_cost)
 
     def fed_average(self):
         print("Fed Averaging")
@@ -119,6 +129,7 @@ class Node:
             avg_weight.append(layer_mean)
         
         self.global_model.set_weights(avg_weight) 
+        
 
 def main():
     """main function"""
@@ -127,28 +138,36 @@ def main():
     peers_list = ast.literal_eval(os.environ["PEERS"])
     cluster_id = os.environ["CLUSTER_ID"]
     role_in_cluster = os.environ["ROLE_IN_CLUSTER"]
-    this_node = Node(context, node_id, peers_list, cluster_id, role_in_cluster)
+    travel_cost = int(os.environ["TRAVEL_COST"])
+    this_node = Node(context, node_id, peers_list, cluster_id, role_in_cluster, travel_cost)
 
 
     # Read comm template config file
     comm_template = json.load(open('comm_template.json'))
     total_rounds = len(comm_template.keys())
+    print("total rounds: ", total_rounds)
     print(f"node number: {this_node.node_id} , role: {this_node.role_in_cluster}")
     isLeader = False
     if this_node.role_in_cluster == "LEADER":
         isLeader = True
     print(f"{this_node.node_id} is leader: {isLeader}")
 
+    if this_node.node_id == "8":
+        this_node.computing_resources = 100
+
+    start = time.time()
+
     for i in range(1, total_rounds + 2):
         if i == total_rounds+1:
-            if this_node.node_id == "node"+str(comm_template[str(total_rounds)]["to"]):
-                # Last node 
-                # fed avg
-                if this_node.role_in_cluster == "LEADER":
-                    print("entering fed avg")
-                    this_node.fed_average()
-                # Global accuracy
-                this_node.inference_step()
+            print("last round: ", this_node.node_id)
+            # if this_node.node_id == "node"+str(comm_template[str(total_rounds)]["to"]):
+            #     # Last node 
+            #     # fed avg
+            #     if this_node.role_in_cluster == "LEADER":
+            #         print("entering fed avg")
+            #         this_node.fed_average()
+            #     # Global accuracy
+            #     this_node.inference_step()
         else :
             ith_round = comm_template[str(i)]
             from_node = "node" + str(ith_round["from"])
@@ -174,8 +193,15 @@ def main():
                 # Logging iteration and prev_node for audit
                 this_node.local_history.append({"iteration":i, "prev_node":rcvd_from.decode("utf-8")})
 
+    print("out of for loop: ", this_node.node_id)
     # this_node.print_node_details()
-    
+    if this_node.role_in_cluster == "LEADER":
+        print("entering fed avg")
+        this_node.fed_average()
+        # Global accuracy
+        this_node.inference_step()
+        end = time.time()
+        print(f"total time taken: {end-start} seconds")
 
 
 
